@@ -1,0 +1,122 @@
+openapi: 3.0.3
+info:
+  title: Tsunagaki API
+  version: "20250618"
+servers:
+  - url: http://localhost:8000/api
+
+paths:
+  /auth/login:
+    post:
+      summary: ログインAPI
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  required: [email, password]
+                  properties:
+                    email:
+                      type: string
+                      format: email
+                    password:
+                      type: string
+                - type: object
+                  required: [username, password]
+                  properties:
+                    username:
+                      type: string
+                    password:
+                      type: string
+              description: email または username のどちらかと password を使用してログインします。
+      responses:
+        "200":
+          description: ログイン成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                  refresh_token:
+                    type: string
+                  token_type:
+                    type: string
+                    example: bearer
+                  expires_in:
+                    type: integer
+        "401":
+          description: 認証失敗
+
+  /auth/refresh:
+    post:
+      summary: リフレッシュトークンを用いたアクセストークン再発行
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refresh_token:
+                  type: string
+              required:
+                - refresh_token
+      responses:
+        "200":
+          description: 新しいアクセストークン
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                  token_type:
+                    type: string
+                    example: bearer
+                  expires_in:
+                    type: integer
+        "401":
+          description: 無効なトークン
+
+  /auth/logout:
+    post:
+      summary: ログアウト（トークン失効）
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: ログアウト成功
+
+  /user/profile:
+    get:
+      summary: 認証済ユーザーのプロフィール取得
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: プロフィール情報
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  username:
+                    type: string
+                  email:
+                    type: string
+        "401":
+          description: 認証エラー
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
