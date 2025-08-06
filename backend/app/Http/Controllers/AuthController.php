@@ -3,19 +3,24 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Dtos\Auth\Signin\SigninRequestDto;
+use App\Dtos\Auth\Signup\SignupRequestDto;
+use App\Dtos\Auth\Token\RefreshTokenRequestDto;
+use App\Http\Requests\Auth\SigninRequest;
+use App\Http\Requests\Auth\SignupRequest;
+use App\Http\Requests\Auth\RefreshTokenRequest;
+use App\Http\Resources\MessageResource;
+use App\Http\Resources\TokenResource;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Str;
-use App\Models\User;
-use App\Models\RefreshToken;
-use Tymon\JWTAuth\Facades\JWTAuth;
+use App\Services\AuthService;
 use Illuminate\Http\JsonResponse;
-use \Symfony\Component\HttpFoundation\Response;
+
 
 
 class AuthController extends Controller
 {
+
+    public function __construct(private AuthService $authService){}
 
     /**
      * ユーザー登録
@@ -23,138 +28,60 @@ class AuthController extends Controller
      * @param Request $request
      * @return JsonResponse
      */
-    public function signup(Request $request): JsonResponse
+    public function signup(SignupRequest $request): JsonResponse
     {
-        $request->validate([
-            'name' => 'required|string|max:255',
-            'email' => 'required|email|unique:users',
-            'password' => 'required|string|min:8|confirmed',
-        ]);
 
-        $user = User::create([
-            'name' => $request->name,
-            'email' => $request->email,
-            'password' => Hash::make($request->password),
-        ]);
+        $params = $request->safe()->toArray();
+        $signupRequestDto = new SignupRequestDto($params['email'], $params['name'], $params['password']);
+        $tokenResponseDto = $this->authService->signup($signupRequestDto);
 
-        $accessToken = JWTAuth::fromUser($user);
-        $refresh = $this->createRefreshToken($user);
-
-        return response()->json([
-            'access_token' => $accessToken,
-            'refresh_token' => $refresh['token'],
-            'token_type' => 'bearer',
-            'access_token_expires_at' => now()->addMinutes(Auth::factory()->getTTL())->toISOString(),
-            'refresh_token_expires_at' => $refresh['expires_at'],
-            'user' => $user,
-        ], Response::HTTP_CREATED);
+        return (new TokenResource($tokenResponseDto))
+            ->response()
+            ->setStatusCode(201);
     }
 
     /**
      * ログイン処理（アクセストークンとリフレッシュトークンの発行）
      *
      * @param Request $request
-     * @return JsonResponse
+     * @return TokenResource
      * **/
-    public function signin(Request $request): JsonResponse
+    public function signin(SigninRequest $request): TokenResource
     {
-        $credentials = $request->only('email', 'name', 'password');
+        $params = $request->safe()->array();
+        $signinRequestDto = new SigninRequestDto($params['email'] ?? null, $params['name'] ?? null, $params['password']);
+        $tokenResponseDto = $this->authService->signin($signinRequestDto);
 
-        $loginField = filter_var($credentials['email'] ?? $credentials['name'], FILTER_VALIDATE_EMAIL) ? 'email' : 'name';
-        $loginValue = $credentials[$loginField];
-
-        if (!$accessToken = Auth::attempt([$loginField => $loginValue, 'password' => $credentials['password']])) {
-            return response()->json(['error' => 'Unauthorized'],  Response::HTTP_UNAUTHORIZED);
-        }
-
-        $user = Auth::user();
-        RefreshToken::where('user_id', $user->id)->delete();
-
-        $refresh = $this->createRefreshToken($user);
-
-        return response()->json([
-            'access_token' => $accessToken,
-            'refresh_token' => $refresh['token'],
-            'token_type' => 'bearer',
-            'access_token_expires_at' => now()->addMinutes(Auth::factory()->getTTL())->toISOString(),
-            'refresh_token_expires_at' => $refresh['expires_at'],
-            'user' => $user,
-        ], Response::HTTP_OK);
+        return new TokenResource($tokenResponseDto);
     }
 
     /**
      * アクセストークンの再発行（リフレッシュトークン使用）
      *
      * @param Request $request
-     * @return JsonResponse
+     * @return TokenResource
      **/
-    public function refresh(Request $request): JsonResponse
+    public function refresh(RefreshTokenRequest $request): TokenResource
     {
-        $refreshToken = $request->input('refresh_token');
-        $tokenHash = hash('sha256', $refreshToken);
+        $params = $request->safe()->array();
+        $refreshTokenRequestDto = new RefreshTokenRequestDto($params['refresh_token']);
+        $tokenResponseDto = $this->authService->refresh($refreshTokenRequestDto);
 
-        $refreshTokenRecord = RefreshToken::where('refresh_token', $tokenHash)
-            ->where('refresh_token_expires_at', '>', now())
-            ->first();
-
-        if (!$refreshTokenRecord) {
-            RefreshToken::where('refresh_token', $tokenHash)
-                ->delete();
-            return response()->json(['error' => 'リフレッシュトークンの有効期限が切れています'], Response::HTTP_UNAUTHORIZED);
-        }
-
-        $user = User::find($refreshTokenRecord->user_id);
-        $newAccessToken = Auth::login($user);
-        RefreshToken::where('refresh_token', $tokenHash)
-            ->delete();
-        $refresh = $this->createRefreshToken($user);
-
-        return response()->json([
-            'access_token' => $newAccessToken,
-            'refresh_token' => $refresh['token'],
-            'token_type' => 'bearer',
-            'access_token_expires_at' => now()->addMinutes(Auth::factory()->getTTL())->toISOString(),
-            'refresh_token_expires_at' => $refresh['expires_at'],
-            'user' => $user,
-        ], Response::HTTP_OK);
+        return new TokenResource($tokenResponseDto);
     }
 
     /**
      * ログアウト（アクセストークンの無効化 & リフレッシュトークンの削除）
      *
      * @param Request $request
-     * @return JsonResponse
+     * @return MessageResource
      **/
-    public function logout(Request $request): JsonResponse
+    public function signout(RefreshTokenRequest $request): MessageResource
+
     {
-
-        $refreshToken = $request->input('refresh_token');
-
-        Auth::logout();
-        RefreshToken::where('refresh_token', hash('sha256', $refreshToken))
-            ->delete();
-
-        return response()->json(['message' => 'ログアウトしました。'], Response::HTTP_OK);
-    }
-
-    /**
-     * リフレッシュトークンを生成する
-     * 
-     * @param User $user
-     * @return Array
-     */
-    private function createRefreshToken(User $user): Array
-    {
-        $refreshToken = Str::random(60);
-        $refreshTokenExpiresAt = now()->addDays(7);
-        RefreshToken::create([
-            'user_id' => $user->id,
-            'refresh_token' => hash('sha256', $refreshToken),
-            'refresh_token_expires_at' => now()->addDays(7),
-        ]);
-        return [
-            'token' => $refreshToken,
-            'expires_at' => $refreshTokenExpiresAt,
-        ];
+        $params = $request->safe()->array();
+        $refreshTokenRequestDto = new RefreshTokenRequestDto($params['refresh_token']);
+        $operationMessageDto = $this->authService->signout($refreshTokenRequestDto);
+        return new MessageResource($operationMessageDto);
     }
 }

@@ -118,12 +118,12 @@ paths:
         "401":
           description: 無効なトークン
 
-  /auth/logout:
+  /auth/signout:
     post:
       summary: ログアウト
       description: アクセストークンを無効化し、対応するリフレッシュトークンも削除します。
       security:
-        - bearerAuth: [] # ← これがないとトークンがヘッダーに付与されません
+        - bearerAuth: []
       requestBody:
         required: true
         content:

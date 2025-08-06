@@ -12,5 +12,5 @@ Route::prefix('auth')->group(function () {
     Route::post('signup', [AuthController::class, 'signup']);
     Route::post('signin', [AuthController::class, 'signin']);
     Route::post('refresh', [AuthController::class, 'refresh']);
-    Route::post('logout', [AuthController::class, 'logout']);
+    Route::post('signout', [AuthController::class, 'signout']);
 });
